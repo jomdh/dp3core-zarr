@@ -1,0 +1,6 @@
+/build*/
+/.cache/
+*.swp
+__pycache__/
+/build-venv/
+*.egg-info/

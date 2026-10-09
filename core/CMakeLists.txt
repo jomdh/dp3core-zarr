@@ -82,6 +82,9 @@ set(DP3CORE_ZARR_ZSTD_SOURCES
 list(TRANSFORM DP3CORE_ZARR_ZSTD_SOURCES
      PREPEND "${_dp3core_zarr_zstd_lib}/")
 add_library(dp3core_zarr_zstd STATIC ${DP3CORE_ZARR_ZSTD_SOURCES})
+# DP3 links this archive into libDP3.so. aarch64 rejects a non-PIC member.
+set_target_properties(dp3core_zarr_zstd PROPERTIES
+  POSITION_INDEPENDENT_CODE ON)
 target_include_directories(dp3core_zarr_zstd
   PUBLIC "${_dp3core_zarr_zstd_lib}")
 
@@ -128,6 +131,9 @@ list(APPEND DP3CORE_ZARR_BLOSC_SOURCES
      "${_dp3core_zarr_lz4_dir}/lz4.c"
      "${_dp3core_zarr_lz4_dir}/lz4hc.c")
 add_library(dp3core_zarr_blosc STATIC ${DP3CORE_ZARR_BLOSC_SOURCES})
+# Same reason as dp3core_zarr_zstd: the archive is linked into libDP3.so.
+set_target_properties(dp3core_zarr_blosc PROPERTIES
+  POSITION_INDEPENDENT_CODE ON)
 target_include_directories(dp3core_zarr_blosc
   PUBLIC "${_dp3core_zarr_blosc_dir}"
   PRIVATE "${_dp3core_zarr_lz4_dir}")

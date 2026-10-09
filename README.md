@@ -4,9 +4,12 @@ This repository is the Zarr v3 store for DP3Core.
 
 The store reads a local Zarr v3 directory.
 The store writes a local Zarr v3 directory.
-The public classes will be `ZarrStore` and `ZarrWriter`.
-Those classes are absent from this commit.
-This commit builds the library `dp3core_zarr::core`.
+The public classes are `ZarrStore` and `ZarrWriter`.
+`ZarrStore` reads groups, children, attributes, and array metadata.
+`ZarrWriter` writes groups and array documents.
+`ZarrWriter` writes UTF-32 string chunks and pre-encoded chunks.
+Numeric slabs are a later addition.
+The library target is `dp3core_zarr::core`.
 `LibraryVersion()` returns the version string.
 
 ## Fence
@@ -33,7 +36,10 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
-The public header is `dp3core/zarr/version.h`.
+The public headers are `dp3core/zarr/zarr_store.h`
+and `dp3core/zarr/zarr_writer.h`.
+`OpenZarr` opens a store.
+`CreateZarr` creates a store.
 
 ## Licence
 

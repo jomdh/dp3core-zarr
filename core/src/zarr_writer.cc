@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 //
 // Filesystem writes match DP3 io/zarr/TensorStoreZarr.cc.
-// Numeric slabs stay out of this file.
+// WriteSlab encodes bytes and bytes-then-zstd.
 #include "dp3core/zarr/zarr_writer.h"
 
 #include <algorithm>
@@ -13,6 +13,7 @@
 
 #include "dp3core/zarr/array_document.h"
 #include "dp3core/zarr/chunk_key.h"
+#include "slab.h"
 
 namespace dp3core::zarr {
 namespace {
@@ -168,6 +169,12 @@ void ZarrWriter::WriteEncodedChunk(
     const std::vector<std::byte>& bytes) {
   WriteBytes(ChunkPath(path_, array, chunk_index),
              reinterpret_cast<const char*>(bytes.data()), bytes.size());
+}
+
+void ZarrWriter::WriteSlab(const std::string& array, std::int64_t begin,
+                           std::int64_t end, ElementType type,
+                           const void* data) {
+  WriteFirstAxis(path_, array, begin, end, type, data);
 }
 
 void ZarrWriter::Resize(const std::string& array, std::int64_t length) {

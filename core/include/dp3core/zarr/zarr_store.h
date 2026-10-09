@@ -40,7 +40,6 @@ using Attributes = std::map<std::string, AttributeValue>;
 inline constexpr char kZarrJsonName[] = "zarr.json";
 
 /// Reads one local Zarr v3 directory. Node "" is the root.
-/// Numeric slabs are a later addition. This class reads metadata only.
 class ZarrStore {
  public:
   explicit ZarrStore(std::string path);
@@ -56,6 +55,19 @@ class ZarrStore {
   Attributes ReadAttributes(const std::string& node) const;
 
   ArrayMetadata ReadArrayMetadata(const std::string& array) const;
+
+  /// The whole numeric array, converted to double, in C order.
+  /// Complex64 is rejected. Visibility cubes use ReadSlab.
+  std::vector<double> ReadDoubles(const std::string& array) const;
+
+  /// A one-dimensional fixed_length_utf32 array. A U+0000 ends a string.
+  std::vector<std::string> ReadStrings(const std::string& array) const;
+
+  /// The slab [@p begin, @p end) on the first dimension, in C order.
+  /// @p out holds (end - begin) times the product of the other dimensions
+  /// elements of @p type.
+  void ReadSlab(const std::string& array, std::int64_t begin,
+                std::int64_t end, ElementType type, void* out) const;
 
  private:
   std::string path_;

@@ -42,7 +42,7 @@ struct CodecSpec {
 };
 
 /// Creates groups, array documents, string chunks, and pre-encoded chunks.
-/// Numeric slabs are a later addition. This class does not encode zstd.
+/// WriteSlab encodes bytes and bytes-then-zstd. It does not encode Dysco.
 class ZarrWriter {
  public:
   explicit ZarrWriter(std::string path);
@@ -73,6 +73,13 @@ class ZarrWriter {
 
   /// Sets the length of the first dimension.
   void Resize(const std::string& array, std::int64_t length);
+
+  /// Writes the slab [@p begin, @p end) on the first dimension.
+  /// @p data holds (end - begin) times the product of the other dimensions
+  /// elements of @p type, in C order. A partial chunk is read, overlaid,
+  /// and written back. A missing chunk is fill value 0 before the overlay.
+  void WriteSlab(const std::string& array, std::int64_t begin,
+                 std::int64_t end, ElementType type, const void* data);
 
  private:
   std::string path_;

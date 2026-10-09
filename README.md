@@ -6,9 +6,12 @@ The store reads a local Zarr v3 directory.
 The store writes a local Zarr v3 directory.
 The public classes are `ZarrStore` and `ZarrWriter`.
 `ZarrStore` reads groups, children, attributes, and array metadata.
-`ZarrWriter` writes groups and array documents.
+`ZarrStore` reads numeric slabs, doubles, and UTF-32 strings.
+`ZarrWriter` writes groups, array documents, and numeric slabs.
 `ZarrWriter` writes UTF-32 string chunks and pre-encoded chunks.
-Numeric slabs are a later addition.
+A numeric slab uses bytes, or bytes then zstd.
+A Dysco chunk is decoded on read.
+blosc is a later addition.
 The library target is `dp3core_zarr::core`.
 `LibraryVersion()` returns the version string.
 
@@ -17,9 +20,8 @@ The library target is `dp3core_zarr::core`.
 A header in this repository does not include a DP3 header.
 The intended arrow is DP3, then this library, then `dp3core-dysco`.
 DP3 will link this library.
-This library will link `dp3core-dysco` when the slab reader needs Dysco.
+This library links `dp3core_dysco::core` to decode a Dysco chunk.
 `dp3core-dysco` stays free of this library.
-This commit does not link `dp3core-dysco`.
 
 `MsV4Source` and `MsV4Sink` stay in the DP3 tree.
 `DyscoZarrCodec` and `BitroundZstdCodec` stay in the DP3 tree.
@@ -31,10 +33,14 @@ The language is C++20.
 CMake 3.20 or newer configures the build.
 
 ```sh
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+  -DDP3CORE_DYSCO_SOURCE_DIR=/path/to/dp3core-dysco
 cmake --build build
 ctest --test-dir build --output-on-failure
 ```
+
+A build inside DP3 already has `dp3core_dysco::core`.
+That build does not need `DP3CORE_DYSCO_SOURCE_DIR` again.
 
 The public headers are `dp3core/zarr/zarr_store.h`
 and `dp3core/zarr/zarr_writer.h`.

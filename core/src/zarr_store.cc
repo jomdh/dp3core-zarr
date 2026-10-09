@@ -1,3 +1,4 @@
+// Copyright (C) 2026 Joaquin Martinez
 // SPDX-License-Identifier: GPL-3.0-only
 #include "dp3core/zarr/zarr_store.h"
 
@@ -8,6 +9,7 @@
 
 #include "dp3core/zarr/array_document.h"
 #include "dp3core/zarr/chunk_key.h"
+#include "slab.h"
 
 namespace dp3core::zarr {
 
@@ -63,6 +65,21 @@ ArrayMetadata ZarrStore::ReadArrayMetadata(const std::string& array) const {
     result.dimension_names.resize(result.shape.size());
   }
   return result;
+}
+
+std::vector<double> ZarrStore::ReadDoubles(const std::string& array) const {
+  return ReadAllDoubles(path_, array);
+}
+
+std::vector<std::string> ZarrStore::ReadStrings(
+    const std::string& array) const {
+  return ReadAllStrings(path_, array);
+}
+
+void ZarrStore::ReadSlab(const std::string& array, std::int64_t begin,
+                         std::int64_t end, ElementType type,
+                         void* out) const {
+  ReadFirstAxis(path_, array, begin, end, type, out);
 }
 
 std::unique_ptr<ZarrStore> OpenZarr(const std::string& path) {

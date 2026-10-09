@@ -85,9 +85,60 @@ add_library(dp3core_zarr_zstd STATIC ${DP3CORE_ZARR_ZSTD_SOURCES})
 target_include_directories(dp3core_zarr_zstd
   PUBLIC "${_dp3core_zarr_zstd_lib}")
 
+# c-blosc c8072c21, the commit TensorStore v0.1.85 vendors.
+# The bundled lz4 is compiled here. zstd, zlib, and snappy stay
+# out, so this target does not define ZSTD_decompress.
+set(DP3CORE_ZARR_BLOSC_COMMIT
+    "c8072c21dcce8daf6dd19a0bbae8c53458ad68cc")
+set(_dp3core_zarr_blosc_src "${CMAKE_BINARY_DIR}/dp3core-zarr-blosc-src")
+set(DP3CORE_ZARR_BLOSC_ROOT
+    "${_dp3core_zarr_blosc_src}/c-blosc-${DP3CORE_ZARR_BLOSC_COMMIT}")
+if(NOT EXISTS "${DP3CORE_ZARR_BLOSC_ROOT}/blosc/blosc.h")
+  string(CONCAT DP3CORE_ZARR_BLOSC_TGZ
+         "${CMAKE_BINARY_DIR}/dp3core-zarr-blosc-"
+         "${DP3CORE_ZARR_BLOSC_COMMIT}.tar.gz")
+  string(CONCAT DP3CORE_ZARR_BLOSC_URL
+         "https://github.com/Blosc/c-blosc/archive/"
+         "${DP3CORE_ZARR_BLOSC_COMMIT}.tar.gz")
+  set(DP3CORE_ZARR_BLOSC_HASH
+      "339b6b42a72991314abf9fbadaeff0c34955c1fafa1710fdfcef45d1bc03c030")
+  file(DOWNLOAD "${DP3CORE_ZARR_BLOSC_URL}" "${DP3CORE_ZARR_BLOSC_TGZ}"
+       EXPECTED_HASH SHA256=${DP3CORE_ZARR_BLOSC_HASH})
+  file(ARCHIVE_EXTRACT INPUT "${DP3CORE_ZARR_BLOSC_TGZ}"
+       DESTINATION "${_dp3core_zarr_blosc_src}")
+endif()
+if(NOT EXISTS "${DP3CORE_ZARR_BLOSC_ROOT}/blosc/blosc.h")
+  message(FATAL_ERROR "c-blosc ${DP3CORE_ZARR_BLOSC_COMMIT} was not extracted")
+endif()
+
+set(_dp3core_zarr_blosc_dir "${DP3CORE_ZARR_BLOSC_ROOT}/blosc")
+set(_dp3core_zarr_lz4_dir
+    "${DP3CORE_ZARR_BLOSC_ROOT}/internal-complibs/lz4-1.10.0")
+set(DP3CORE_ZARR_BLOSC_SOURCES
+  blosc.c
+  blosclz.c
+  fastcopy.c
+  shuffle.c
+  shuffle-generic.c
+  bitshuffle-generic.c
+)
+list(TRANSFORM DP3CORE_ZARR_BLOSC_SOURCES
+     PREPEND "${_dp3core_zarr_blosc_dir}/")
+list(APPEND DP3CORE_ZARR_BLOSC_SOURCES
+     "${_dp3core_zarr_lz4_dir}/lz4.c"
+     "${_dp3core_zarr_lz4_dir}/lz4hc.c")
+add_library(dp3core_zarr_blosc STATIC ${DP3CORE_ZARR_BLOSC_SOURCES})
+target_include_directories(dp3core_zarr_blosc
+  PUBLIC "${_dp3core_zarr_blosc_dir}"
+  PRIVATE "${_dp3core_zarr_lz4_dir}")
+target_compile_definitions(dp3core_zarr_blosc PRIVATE HAVE_LZ4)
+find_package(Threads REQUIRED)
+target_link_libraries(dp3core_zarr_blosc PUBLIC Threads::Threads)
+
 add_library(dp3core_zarr_core
   src/version.cc
   src/array_document.cc
+  src/blosc_lz4.cc
   src/codec_chain.cc
   src/slab.cc
   src/zarr_store.cc
@@ -100,7 +151,7 @@ target_include_directories(dp3core_zarr_core
           "${CMAKE_CURRENT_SOURCE_DIR}/src"
 )
 target_link_libraries(dp3core_zarr_core
-  PRIVATE dp3core_zarr_zstd dp3core_dysco::core)
+  PRIVATE dp3core_zarr_zstd dp3core_zarr_blosc dp3core_dysco::core)
 set_target_properties(dp3core_zarr_core PROPERTIES
   CXX_VISIBILITY_PRESET hidden
   VISIBILITY_INLINES_HIDDEN ON

@@ -14,6 +14,7 @@
 #include "dp3core/dysco/codec.h"
 #include "dp3core/zarr/array_document.h"
 #include "dp3core/zarr/chunk_key.h"
+#include "dp3core/zarr/blosc_lz4.h"
 #include "dp3core/zarr/codec_chain.h"
 
 namespace dp3core::zarr {
@@ -41,6 +42,51 @@ std::size_t Product(const std::vector<std::int64_t>& lengths) {
     count *= part;
   }
   return count;
+}
+
+std::string TextField(const Json& config, const char* key) {
+  const auto field = config.find(key);
+  if (field == config.end() || !field->is_string()) return {};
+  return field->get<std::string>();
+}
+
+int IntegerField(const Json& config, const char* key, bool* present) {
+  const auto field = config.find(key);
+  *present = field != config.end();
+  if (!*present || !field->is_number_integer()) return 0;
+  return field->get<int>();
+}
+
+CodecStep ReadBloscStep(const Json& codec) {
+  const Json config = codec.value("configuration", Json::object());
+  if (TextField(config, "cname") != "lz4") {
+    throw std::runtime_error("The blosc compressor is not lz4");
+  }
+  bool present = false;
+  if (IntegerField(config, "clevel", &present) != kBloscLz4Level ||
+      !present) {
+    throw std::runtime_error("The blosc level is not 5");
+  }
+  if (TextField(config, "shuffle") != "noshuffle") {
+    throw std::runtime_error("The blosc shuffle is not noshuffle");
+  }
+  const int blocksize = IntegerField(config, "blocksize", &present);
+  if (present && (!config.at("blocksize").is_number_integer() ||
+                  blocksize != 0)) {
+    throw std::runtime_error("The blosc block size is not 0");
+  }
+  const int typesize = IntegerField(config, "typesize", &present);
+  const bool bad_typesize =
+      present && (!config.at("typesize").is_number_integer() ||
+                  typesize < 1 || typesize > kBloscMaxTypesize);
+  if (bad_typesize) {
+    throw std::runtime_error("The blosc typesize is out of range");
+  }
+  CodecStep step;
+  step.name = "blosc";
+  step.level = kBloscLz4Level;
+  step.typesize = present ? typesize : 1;
+  return step;
 }
 
 std::vector<std::size_t> Strides(
@@ -105,18 +151,27 @@ Chain ParseChain(const Json& codecs) {
     bytes.name = "bytes";
     chain.standard.push_back(bytes);
     if (codecs.size() > 1) {
-      if (codecs.size() != 2 ||
-          codecs[1].value("name", "") != "zstd") {
+      if (codecs.size() != 2) {
         throw std::runtime_error(
-            "The standard chain is bytes or bytes then zstd");
+            "The standard chain is bytes, bytes then zstd, "
+            "or bytes then blosc");
       }
-      const Json zstd_config =
-          codecs[1].value("configuration", Json::object());
-      CodecStep zstd;
-      zstd.name = "zstd";
-      zstd.level = zstd_config.value("level", 0);
-      zstd.checksum = zstd_config.value("checksum", false);
-      chain.standard.push_back(zstd);
+      const std::string second = codecs[1].value("name", "");
+      if (second == "zstd") {
+        const Json zstd_config =
+            codecs[1].value("configuration", Json::object());
+        CodecStep zstd;
+        zstd.name = "zstd";
+        zstd.level = zstd_config.value("level", 0);
+        zstd.checksum = zstd_config.value("checksum", false);
+        chain.standard.push_back(zstd);
+      } else if (second == "blosc") {
+        chain.standard.push_back(ReadBloscStep(codecs[1]));
+      } else {
+        throw std::runtime_error(
+            "The standard chain is bytes, bytes then zstd, "
+            "or bytes then blosc");
+      }
     }
   }
   if (chain.dysco_data) {

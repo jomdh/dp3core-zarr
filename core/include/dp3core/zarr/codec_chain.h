@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Copyright (C) 2026 Joaquin Martinez
 //
-// bytes, then optional zstd. Sharding and blosc are not this chain.
+// bytes, then optional zstd or the one accepted blosc configuration.
 #ifndef DP3CORE_ZARR_CODEC_CHAIN_H_
 #define DP3CORE_ZARR_CODEC_CHAIN_H_
 
@@ -14,11 +14,13 @@
 
 namespace dp3core::zarr {
 
-/// One step of a standard chain. `level` and `checksum` belong to zstd.
+/// One step of a standard chain. zstd uses `level` and `checksum`.
+/// blosc uses `level` and `typesize`.
 struct CodecStep {
   std::string name;
   int level = 0;
   bool checksum = false;
+  int typesize = 1;
 };
 
 std::size_t ElementSize(ElementType type);
@@ -26,7 +28,8 @@ std::size_t ElementSize(ElementType type);
 /// Fills @p count elements with 0, or false for bool.
 void FillElements(ElementType type, std::size_t count, void* out);
 
-/// Encodes @p count C-order elements. The chain is bytes, or bytes then zstd.
+/// Encodes @p count C-order elements. The chain is bytes, bytes then
+/// zstd, or bytes then blosc.
 std::vector<std::byte> EncodeStandardChunk(
     ElementType type, std::size_t count, const void* data,
     const std::vector<CodecStep>& codecs);
@@ -36,7 +39,8 @@ void DecodeStandardChunk(ElementType type, std::size_t count,
                          const std::vector<std::byte>& encoded,
                          const std::vector<CodecStep>& codecs, void* out);
 
-/// Undoes zstd when the chain has it. The result is the bytes payload.
+/// Undoes zstd or blosc when the chain has it. The result is the
+/// bytes payload.
 std::vector<std::byte> DecodeBytePayload(
     std::size_t raw_size, const std::vector<std::byte>& encoded,
     const std::vector<CodecStep>& codecs);

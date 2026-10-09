@@ -42,7 +42,8 @@ struct CodecSpec {
 };
 
 /// Creates groups, array documents, string chunks, and pre-encoded chunks.
-/// WriteSlab encodes bytes and bytes-then-zstd. It does not encode Dysco.
+/// WriteSlab encodes bytes, bytes then zstd, and bytes then blosc.
+/// It does not encode Dysco.
 class ZarrWriter {
  public:
   explicit ZarrWriter(std::string path);

@@ -9,9 +9,10 @@ The public classes are `ZarrStore` and `ZarrWriter`.
 `ZarrStore` reads numeric slabs, doubles, and UTF-32 strings.
 `ZarrWriter` writes groups, array documents, and numeric slabs.
 `ZarrWriter` writes UTF-32 string chunks and pre-encoded chunks.
-A numeric slab uses bytes, or bytes then zstd.
+A numeric slab uses bytes, bytes then zstd, or bytes then blosc.
+blosc is lz4, level 5, and no shuffle.
+Any other blosc compressor, level, or shuffle is an error.
 A Dysco chunk is decoded on read.
-blosc is a later addition.
 The library target is `dp3core_zarr::core`.
 `LibraryVersion()` returns the version string.
 

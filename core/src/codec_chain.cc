@@ -9,6 +9,8 @@
 
 #include <zstd.h>
 
+#include "dp3core/zarr/blosc_lz4.h"
+
 namespace dp3core::zarr {
 namespace {
 
@@ -27,14 +29,22 @@ struct ZstdContext {
   ZSTD_CCtx* context_;
 };
 
+bool IsBloscStep(const CodecStep& step) {
+  return step.name == "blosc" && step.level == kBloscLz4Level;
+}
+
 void CheckChain(const std::vector<CodecStep>& codecs) {
   if (codecs.empty() || codecs[0].name != "bytes") {
     throw std::runtime_error("The standard chain starts with bytes");
   }
-  if (codecs.size() > 2 ||
-      (codecs.size() == 2 && codecs[1].name != "zstd")) {
+  if (codecs.size() == 1) return;
+  const bool second_ok =
+      codecs.size() == 2 &&
+      (codecs[1].name == "zstd" || IsBloscStep(codecs[1]));
+  if (!second_ok) {
     throw std::runtime_error(
-        "The standard chain is bytes or bytes then zstd");
+        "The standard chain is bytes, bytes then zstd, "
+        "or bytes then blosc");
   }
 }
 
@@ -234,7 +244,9 @@ std::vector<std::byte> EncodeStandardChunk(
     const std::vector<CodecStep>& codecs) {
   CheckChain(codecs);
   std::vector<std::byte> bytes = Pack(type, count, data);
-  if (codecs.size() == 2) {
+  if (codecs.size() == 2 && codecs[1].name == "blosc") {
+    bytes = EncodeBloscLz4(bytes, codecs[1].typesize);
+  } else if (codecs.size() == 2) {
     bytes = Compress(bytes, codecs[1].level, codecs[1].checksum);
   }
   return bytes;
@@ -252,6 +264,9 @@ std::vector<std::byte> DecodeBytePayload(
     std::size_t raw_size, const std::vector<std::byte>& encoded,
     const std::vector<CodecStep>& codecs) {
   CheckChain(codecs);
+  if (codecs.size() == 2 && codecs[1].name == "blosc") {
+    return DecodeBloscLz4(encoded, raw_size);
+  }
   if (codecs.size() == 2) return Decompress(encoded, raw_size);
   if (encoded.size() != raw_size) {
     throw std::runtime_error("Decoded chunk has the wrong size");

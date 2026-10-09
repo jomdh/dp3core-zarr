@@ -275,6 +275,62 @@ void TestDysco() {
   Expect(rejected, "dysco slab write is rejected");
 }
 
+void ExpectRejectedBlosc(const char* cname, int level, const char* shuffle,
+                         const char* what) {
+  using dp3core::zarr::CodecSpec;
+  using dp3core::zarr::ElementType;
+  TempStore temp;
+  auto writer = dp3core::zarr::CreateZarr(temp.path().string());
+  writer->CreateGroup("", {});
+  CodecSpec bytes;
+  bytes.name = "bytes";
+  bytes.parameters.push_back({"endian", std::string("little")});
+  CodecSpec blosc;
+  blosc.name = "blosc";
+  blosc.parameters.push_back({"cname", std::string(cname)});
+  blosc.parameters.push_back({"clevel", level});
+  blosc.parameters.push_back({"shuffle", std::string(shuffle)});
+  writer->CreateEncodedArray("bad", Spec(ElementType::kFloat32, {2}, {2}),
+                             {bytes, blosc});
+  auto store = dp3core::zarr::OpenZarr(temp.path().string());
+  std::vector<float> out(2);
+  bool rejected = false;
+  try {
+    store->ReadSlab("bad", 0, 2, ElementType::kFloat32, out.data());
+  } catch (const std::runtime_error&) {
+    rejected = true;
+  }
+  Expect(rejected, what);
+}
+
+void TestBlosc() {
+  using dp3core::zarr::CodecSpec;
+  using dp3core::zarr::ElementType;
+  TempStore temp;
+  auto writer = dp3core::zarr::CreateZarr(temp.path().string());
+  writer->CreateGroup("", {});
+  CodecSpec bytes;
+  bytes.name = "bytes";
+  bytes.parameters.push_back({"endian", std::string("little")});
+  CodecSpec blosc;
+  blosc.name = "blosc";
+  blosc.parameters.push_back({"cname", std::string("lz4")});
+  blosc.parameters.push_back({"clevel", 5});
+  blosc.parameters.push_back({"shuffle", std::string("noshuffle")});
+  blosc.parameters.push_back({"typesize", 4});
+  writer->CreateEncodedArray("row", Spec(ElementType::kFloat32, {4}, {4}),
+                             {bytes, blosc});
+  const std::vector<float> values = {1.25f, 1.25f, 1.25f, -4.0f};
+  writer->WriteSlab("row", 0, 4, ElementType::kFloat32, values.data());
+  auto store = dp3core::zarr::OpenZarr(temp.path().string());
+  std::vector<float> got(4);
+  store->ReadSlab("row", 0, 4, ElementType::kFloat32, got.data());
+  ExpectEqual(got, values, "blosc lz4 level 5 noshuffle");
+  ExpectRejectedBlosc("zlib", 5, "noshuffle", "blosc compressor is rejected");
+  ExpectRejectedBlosc("lz4", 1, "noshuffle", "blosc level is rejected");
+  ExpectRejectedBlosc("lz4", 5, "shuffle", "blosc shuffle is rejected");
+}
+
 void TestShardingRejected() {
   using dp3core::zarr::CodecSpec;
   using dp3core::zarr::ElementType;
@@ -305,6 +361,7 @@ int main() {
     TestMissingAndSeveralChunks();
     TestStrings();
     TestDysco();
+    TestBlosc();
     TestShardingRejected();
   } catch (const std::exception& error) {
     std::cerr << "FAIL exception " << error.what() << '\n';

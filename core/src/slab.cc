@@ -233,14 +233,18 @@ std::vector<std::byte> ReadChunkFile(const std::filesystem::path& path,
   *found = std::filesystem::is_regular_file(path, error);
   if (!*found) return {};
   std::ifstream file(path, std::ios::binary);
-  const std::vector<char> bytes((std::istreambuf_iterator<char>(file)),
-                                std::istreambuf_iterator<char>());
-  if (!file) {
+  file.seekg(0, std::ios::end);
+  const std::streamoff end = file.tellg();
+  if (!file || end < 0) {
     throw std::runtime_error("Cannot read " + path.string());
   }
-  std::vector<std::byte> out(bytes.size());
-  if (!bytes.empty()) {
-    std::memcpy(out.data(), bytes.data(), bytes.size());
+  file.seekg(0, std::ios::beg);
+  std::vector<std::byte> out(static_cast<std::size_t>(end));
+  if (end > 0) {
+    file.read(reinterpret_cast<char*>(out.data()), end);
+  }
+  if (!file) {
+    throw std::runtime_error("Cannot read " + path.string());
   }
   return out;
 }

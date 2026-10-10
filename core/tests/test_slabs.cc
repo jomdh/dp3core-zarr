@@ -6,10 +6,16 @@
 
 #include <complex>
 #include <cstdint>
+#include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <iterator>
 #include <string>
 #include <vector>
+
+#include "dp3core/zarr/chunk_key.h"
+#include "dp3core/zarr/codec_chain.h"
 
 namespace {
 
@@ -331,6 +337,84 @@ void TestBlosc() {
   ExpectRejectedBlosc("lz4", 5, "shuffle", "blosc shuffle is rejected");
 }
 
+void TestMatchingChunk() {
+  using dp3core::zarr::CodecStep;
+  using dp3core::zarr::ElementType;
+  constexpr int kTime = 3;
+  constexpr int kBaseline = 2;
+  constexpr int kChannel = 2;
+  constexpr int kPol = 2;
+  constexpr int kChunkTime = 2;
+  const int count = kTime * kBaseline * kChannel * kPol;
+  const int row = kBaseline * kChannel * kPol;
+  std::vector<std::complex<float>> values(static_cast<std::size_t>(count));
+  for (int i = 0; i < count; ++i) {
+    values[static_cast<std::size_t>(i)] = {
+        static_cast<float>(i), static_cast<float>(-i) * 0.5f};
+  }
+  TempStore temp;
+  auto writer = dp3core::zarr::CreateZarr(temp.path().string());
+  writer->CreateGroup("", {});
+  writer->CreateArray(
+      "vis",
+      Spec(ElementType::kComplex64, {kTime, kBaseline, kChannel, kPol},
+           {kChunkTime, kBaseline, kChannel, kPol}),
+      3);
+  writer->WriteSlab("vis", 0, kTime, ElementType::kComplex64,
+                    values.data());
+
+  const std::size_t chunk_count = static_cast<std::size_t>(kChunkTime * row);
+  CodecStep bytes;
+  bytes.name = "bytes";
+  CodecStep zstd;
+  zstd.name = "zstd";
+  zstd.level = 3;
+  const std::vector<std::byte> expect =
+      dp3core::zarr::EncodeStandardChunk(ElementType::kComplex64, chunk_count,
+                                         values.data(), {bytes, zstd});
+  const auto path =
+      dp3core::zarr::ChunkPath(temp.path(), "vis", {0, 0, 0, 0});
+  std::ifstream file(path, std::ios::binary);
+  const std::vector<char> stored((std::istreambuf_iterator<char>(file)),
+                                 std::istreambuf_iterator<char>());
+  Expect(file && stored.size() == expect.size(), "matching chunk size");
+  if (stored.size() == expect.size()) {
+    const bool same =
+        std::memcmp(stored.data(), expect.data(), expect.size()) == 0;
+    Expect(same, "matching chunk bytes");
+  }
+
+  auto store = dp3core::zarr::OpenZarr(temp.path().string());
+  std::vector<std::complex<float>> whole(static_cast<std::size_t>(count));
+  store->ReadSlab("vis", 0, kTime, ElementType::kComplex64, whole.data());
+  ExpectEqual(whole, values, "matching full read");
+
+  std::vector<std::complex<float>> first(chunk_count);
+  store->ReadSlab("vis", 0, kChunkTime, ElementType::kComplex64,
+                  first.data());
+  ExpectEqual(first,
+              std::vector<std::complex<float>>(values.begin(),
+                                               values.begin() + chunk_count),
+              "matching first chunk");
+
+  const std::size_t tail =
+      static_cast<std::size_t>((kTime - kChunkTime) * row);
+  std::vector<std::complex<float>> last(tail);
+  store->ReadSlab("vis", kChunkTime, kTime, ElementType::kComplex64,
+                  last.data());
+  ExpectEqual(last,
+              std::vector<std::complex<float>>(values.begin() + chunk_count,
+                                               values.end()),
+              "matching short chunk");
+
+  std::vector<std::complex<float>> middle(static_cast<std::size_t>(2 * row));
+  store->ReadSlab("vis", 1, 3, ElementType::kComplex64, middle.data());
+  ExpectEqual(middle,
+              std::vector<std::complex<float>>(values.begin() + row,
+                                               values.begin() + 3 * row),
+              "partial read across chunks");
+}
+
 void TestShardingRejected() {
   using dp3core::zarr::CodecSpec;
   using dp3core::zarr::ElementType;
@@ -362,6 +446,7 @@ int main() {
     TestStrings();
     TestDysco();
     TestBlosc();
+    TestMatchingChunk();
     TestShardingRejected();
   } catch (const std::exception& error) {
     std::cerr << "FAIL exception " << error.what() << '\n';

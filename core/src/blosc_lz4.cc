@@ -21,21 +21,21 @@ void PrepareBloscLz4() {
 
 }  // namespace
 
-std::vector<std::byte> EncodeBloscLz4(const std::vector<std::byte>& raw,
+std::vector<std::byte> EncodeBloscLz4(const std::byte* raw, std::size_t size,
                                       int typesize) {
   if (typesize < 1 || typesize > kBloscMaxTypesize) {
     throw std::runtime_error("The blosc typesize is out of range");
   }
   PrepareBloscLz4();
-  if (raw.empty()) return {};
-  if (raw.size() > static_cast<std::size_t>(BLOSC_MAX_BUFFERSIZE)) {
+  if (size == 0) return {};
+  if (size > static_cast<std::size_t>(BLOSC_MAX_BUFFERSIZE)) {
     throw std::runtime_error("The blosc input is too large");
   }
   std::vector<std::byte> compressed(
-      raw.size() + static_cast<std::size_t>(BLOSC_MAX_OVERHEAD));
+      size + static_cast<std::size_t>(BLOSC_MAX_OVERHEAD));
   const int written = blosc_compress(
       kBloscLz4Level, BLOSC_NOSHUFFLE, static_cast<std::size_t>(typesize),
-      raw.size(), raw.data(), compressed.data(), compressed.size());
+      size, raw, compressed.data(), compressed.size());
   if (written <= 0) {
     throw std::runtime_error("blosc compress failed");
   }
@@ -43,21 +43,31 @@ std::vector<std::byte> EncodeBloscLz4(const std::vector<std::byte>& raw,
   return compressed;
 }
 
-std::vector<std::byte> DecodeBloscLz4(const std::vector<std::byte>& encoded,
-                                      std::size_t raw_size) {
+std::vector<std::byte> EncodeBloscLz4(const std::vector<std::byte>& raw,
+                                      int typesize) {
+  return EncodeBloscLz4(raw.data(), raw.size(), typesize);
+}
+
+void DecodeBloscLz4Into(const std::byte* encoded, std::size_t encoded_size,
+                        std::byte* raw, std::size_t raw_size) {
   PrepareBloscLz4();
   if (raw_size == 0) {
-    if (!encoded.empty()) {
+    if (encoded_size != 0) {
       throw std::runtime_error("blosc decompress failed");
     }
-    return {};
+    return;
   }
-  std::vector<std::byte> raw(raw_size);
   const int written =
-      blosc_decompress_ctx(encoded.data(), raw.data(), raw.size(), 1);
+      blosc_decompress_ctx(encoded, raw, raw_size, 1);
   if (written <= 0 || static_cast<std::size_t>(written) != raw_size) {
     throw std::runtime_error("blosc decompress failed");
   }
+}
+
+std::vector<std::byte> DecodeBloscLz4(const std::vector<std::byte>& encoded,
+                                      std::size_t raw_size) {
+  std::vector<std::byte> raw(raw_size);
+  DecodeBloscLz4Into(encoded.data(), encoded.size(), raw.data(), raw_size);
   return raw;
 }
 

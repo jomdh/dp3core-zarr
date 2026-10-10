@@ -39,6 +39,18 @@ void DecodeStandardChunk(ElementType type, std::size_t count,
                          const std::vector<std::byte>& encoded,
                          const std::vector<CodecStep>& codecs, void* out);
 
+/// Encodes @p count native elements. The host is little-endian, so
+/// the memory bytes are the little-endian payload.
+std::vector<std::byte> EncodeNativeChunk(
+    ElementType type, std::size_t count, const void* data,
+    const std::vector<CodecStep>& codecs);
+
+/// Decodes a little-endian chunk into @p out. The host is little-endian,
+/// so the payload bytes are the native elements.
+void DecodeNativeChunk(ElementType type, std::size_t count,
+                       const std::vector<std::byte>& encoded,
+                       const std::vector<CodecStep>& codecs, void* out);
+
 /// Undoes zstd or blosc when the chain has it. The result is the
 /// bytes payload.
 std::vector<std::byte> DecodeBytePayload(

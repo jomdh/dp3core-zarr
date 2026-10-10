@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "dp3core/zarr/codec_chain.h"
 
+#include <bit>
 #include <complex>
 #include <cstring>
 #include <stdexcept>
@@ -184,10 +185,10 @@ void Unpack(ElementType type, const std::vector<std::byte>& bytes,
   }
 }
 
-std::vector<std::byte> Compress(const std::vector<std::byte>& raw,
-                                int level, bool checksum) {
+std::vector<std::byte> CompressSpan(const void* raw, std::size_t size,
+                                    int level, bool checksum) {
   ZstdContext context;
-  const std::size_t bound = ZSTD_compressBound(raw.size());
+  const std::size_t bound = ZSTD_compressBound(size);
   std::vector<std::byte> compressed(bound);
   const std::size_t level_status = ZSTD_CCtx_setParameter(
       context.get(), ZSTD_c_compressionLevel, level);
@@ -197,8 +198,7 @@ std::vector<std::byte> Compress(const std::vector<std::byte>& raw,
     throw std::runtime_error("Cannot set zstd parameters");
   }
   const std::size_t written = ZSTD_compress2(
-      context.get(), compressed.data(), compressed.size(), raw.data(),
-      raw.size());
+      context.get(), compressed.data(), compressed.size(), raw, size);
   if (ZSTD_isError(written)) {
     throw std::runtime_error(std::string("zstd compress failed: ") +
                              ZSTD_getErrorName(written));
@@ -207,16 +207,31 @@ std::vector<std::byte> Compress(const std::vector<std::byte>& raw,
   return compressed;
 }
 
-std::vector<std::byte> Decompress(const std::vector<std::byte>& encoded,
-                                  std::size_t raw_size) {
-  std::vector<std::byte> raw(raw_size);
+std::vector<std::byte> Compress(const std::vector<std::byte>& raw,
+                                int level, bool checksum) {
+  return CompressSpan(raw.data(), raw.size(), level, checksum);
+}
+
+void DecompressInto(const std::vector<std::byte>& encoded, std::byte* raw,
+                    std::size_t raw_size) {
   const std::size_t written =
-      ZSTD_decompress(raw.data(), raw.size(), encoded.data(),
-                      encoded.size());
+      ZSTD_decompress(raw, raw_size, encoded.data(), encoded.size());
   if (ZSTD_isError(written) || written != raw_size) {
     throw std::runtime_error("zstd decompress failed");
   }
+}
+
+std::vector<std::byte> Decompress(const std::vector<std::byte>& encoded,
+                                  std::size_t raw_size) {
+  std::vector<std::byte> raw(raw_size);
+  DecompressInto(encoded, raw.data(), raw_size);
   return raw;
+}
+
+void RequireLittleEndianHost() {
+  if constexpr (std::endian::native != std::endian::little) {
+    throw std::runtime_error("The host is not little endian");
+  }
 }
 
 }  // namespace
@@ -272,6 +287,54 @@ std::vector<std::byte> DecodeBytePayload(
     throw std::runtime_error("Decoded chunk has the wrong size");
   }
   return encoded;
+}
+
+std::vector<std::byte> EncodeNativeChunk(
+    ElementType type, std::size_t count, const void* data,
+    const std::vector<CodecStep>& codecs) {
+  static_assert(sizeof(bool) == 1);
+  static_assert(sizeof(float) == 4);
+  static_assert(sizeof(double) == 8);
+  static_assert(sizeof(std::int64_t) == 8);
+  static_assert(sizeof(std::complex<float>) == 8);
+  RequireLittleEndianHost();
+  CheckChain(codecs);
+  const std::size_t bytes = count * ElementSize(type);
+  if (codecs.size() == 2 && codecs[1].name == "blosc") {
+    return EncodeBloscLz4(static_cast<const std::byte*>(data), bytes,
+                          codecs[1].typesize);
+  }
+  if (codecs.size() == 2) {
+    return CompressSpan(data, bytes, codecs[1].level, codecs[1].checksum);
+  }
+  std::vector<std::byte> payload(bytes);
+  if (bytes != 0) {
+    std::memcpy(payload.data(), data, bytes);
+  }
+  return payload;
+}
+
+void DecodeNativeChunk(ElementType type, std::size_t count,
+                       const std::vector<std::byte>& encoded,
+                       const std::vector<CodecStep>& codecs, void* out) {
+  RequireLittleEndianHost();
+  CheckChain(codecs);
+  const std::size_t bytes = count * ElementSize(type);
+  auto* raw = static_cast<std::byte*>(out);
+  if (codecs.size() == 2 && codecs[1].name == "blosc") {
+    DecodeBloscLz4Into(encoded.data(), encoded.size(), raw, bytes);
+    return;
+  }
+  if (codecs.size() == 2) {
+    DecompressInto(encoded, raw, bytes);
+    return;
+  }
+  if (encoded.size() != bytes) {
+    throw std::runtime_error("Decoded chunk has the wrong size");
+  }
+  if (bytes != 0) {
+    std::memcpy(raw, encoded.data(), bytes);
+  }
 }
 
 }  // namespace dp3core::zarr

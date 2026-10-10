@@ -3,6 +3,7 @@
 #include "slab.h"
 
 #include <algorithm>
+#include <bit>
 #include <complex>
 #include <cstring>
 #include <filesystem>
@@ -255,6 +256,29 @@ std::vector<std::int64_t> ChunkLength(
   return length;
 }
 
+bool ChunkFillsSlab(const Chain& chain,
+                   const std::vector<std::int64_t>& origin,
+                   const std::vector<std::int64_t>& length,
+                   const std::vector<std::int64_t>& shape,
+                   std::int64_t begin, std::int64_t end) {
+  if (chain.dysco_data || chain.dysco_weights) return false;
+  if (std::endian::native != std::endian::little) return false;
+  if (origin.empty() || origin[0] < begin ||
+      origin[0] + length[0] > end) {
+    return false;
+  }
+  for (std::size_t dim = 1; dim < origin.size(); ++dim) {
+    if (origin[dim] != 0 || length[dim] != shape[dim]) return false;
+  }
+  return true;
+}
+
+std::size_t SlabElement(const std::vector<std::int64_t>& origin,
+                        const std::vector<std::size_t>& stride,
+                        std::int64_t begin) {
+  return static_cast<std::size_t>(origin[0] - begin) * stride[0];
+}
+
 void DecodeChunk(const Chain& chain, ElementType type,
                  const std::vector<std::int64_t>& length,
                  const std::vector<std::byte>& encoded, void* out) {
@@ -386,13 +410,20 @@ void ReadRegion(const std::string& store, const std::string& array,
   FillElements(type, Product(region), out);
   auto* slab = static_cast<std::byte*>(out);
   const std::size_t width = ElementSize(type);
+  const std::vector<std::size_t> stride = Strides(region);
   VisitChunks(info, begin, end, [&](const std::vector<std::int64_t>& index) {
     const std::vector<std::int64_t> length = ChunkLength(info, index);
     const std::vector<std::int64_t> origin = Origin(info, index);
-    std::vector<std::byte> chunk(Product(length) * width);
     bool found = false;
     const std::vector<std::byte> encoded =
         ReadChunkFile(ChunkPath(store, array, index), &found);
+    if (ChunkFillsSlab(chain, origin, length, info.shape, begin, end)) {
+      if (!found) return;
+      DecodeNativeChunk(type, Product(length), encoded, chain.standard,
+                        slab + SlabElement(origin, stride, begin) * width);
+      return;
+    }
+    std::vector<std::byte> chunk(Product(length) * width);
     if (!found) {
       FillElements(type, Product(length), chunk.data());
     } else {
@@ -466,9 +497,22 @@ void WriteFirstAxis(const std::string& store, const std::string& array,
   }
   const auto* slab = static_cast<const std::byte*>(data);
   const std::size_t width = ElementSize(type);
+  std::vector<std::int64_t> region = info.shape;
+  region[0] = end - begin;
+  const std::vector<std::size_t> stride = Strides(region);
   VisitChunks(info, begin, end, [&](const std::vector<std::int64_t>& index) {
     const std::vector<std::int64_t> length = ChunkLength(info, index);
     const std::vector<std::int64_t> origin = Origin(info, index);
+    if (ChunkFillsSlab(chain, origin, length, info.shape, begin, end)) {
+      const std::byte* span =
+          slab + SlabElement(origin, stride, begin) * width;
+      const std::vector<std::byte> encoded = EncodeNativeChunk(
+          type, Product(length), span, chain.standard);
+      WriteBytes(ChunkPath(store, array, index),
+                 reinterpret_cast<const char*>(encoded.data()),
+                 encoded.size());
+      return;
+    }
     const bool covered =
         origin[0] >= begin && origin[0] + length[0] <= end;
     std::vector<std::byte> chunk(Product(length) * width);

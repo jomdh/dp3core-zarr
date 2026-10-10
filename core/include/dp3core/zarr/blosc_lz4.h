@@ -18,9 +18,17 @@ inline constexpr int kBloscMaxTypesize = 255;
 std::vector<std::byte> EncodeBloscLz4(const std::vector<std::byte>& raw,
                                       int typesize);
 
+/// Compresses @p size bytes at @p raw. The compressor is lz4.
+std::vector<std::byte> EncodeBloscLz4(const std::byte* raw, std::size_t size,
+                                      int typesize);
+
 /// Decompresses a frame written by EncodeBloscLz4 into @p raw_size bytes.
 std::vector<std::byte> DecodeBloscLz4(const std::vector<std::byte>& encoded,
                                       std::size_t raw_size);
+
+/// Decompresses a frame into @p raw. @p raw_size is the decoded length.
+void DecodeBloscLz4Into(const std::byte* encoded, std::size_t encoded_size,
+                        std::byte* raw, std::size_t raw_size);
 
 }  // namespace dp3core::zarr
 

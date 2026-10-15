@@ -79,6 +79,13 @@ set(DP3CORE_ZARR_ZSTD_SOURCES
   decompress/zstd_decompress.c
   decompress/zstd_decompress_block.c
 )
+# x86_64 calls the BMI2 loop in this file. aarch64 leaves that
+# macro off, so the C list is enough there.
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "amd64.*|AMD64.*|x86_64.*|X86_64.*")
+  enable_language(ASM)
+  list(APPEND DP3CORE_ZARR_ZSTD_SOURCES
+       decompress/huf_decompress_amd64.S)
+endif()
 list(TRANSFORM DP3CORE_ZARR_ZSTD_SOURCES
      PREPEND "${_dp3core_zarr_zstd_lib}/")
 add_library(dp3core_zarr_zstd STATIC ${DP3CORE_ZARR_ZSTD_SOURCES})

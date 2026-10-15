@@ -438,11 +438,97 @@ void TestShardingRejected() {
 
 }  // namespace
 
+// B57 (V1-M1-S034). A Zarr v3 chunk is full-size even past the array
+// edge. The reader and the writer clipped it before 2026-10-15.
+void TestEdgeChunkIsFullSize() {
+  using dp3core::zarr::ElementType;
+  TempStore temp;
+  auto writer = dp3core::zarr::CreateZarr(temp.path().string());
+  writer->CreateGroup("", {});
+  writer->CreateArray("row", Spec(ElementType::kFloat64, {7}, {4}), 0);
+  std::vector<double> values(7);
+  for (int i = 0; i < 7; ++i) values[static_cast<std::size_t>(i)] = 10.0 + i;
+  writer->WriteSlab("row", 0, 7, ElementType::kFloat64, values.data());
+  const std::filesystem::path edge =
+      dp3core::zarr::ChunkPath(temp.path(), "row", {1});
+  Expect(std::filesystem::file_size(edge) == 4 * sizeof(double),
+         "edge chunk is stored full-size");
+  auto store = dp3core::zarr::OpenZarr(temp.path().string());
+  std::vector<double> got(7);
+  store->ReadSlab("row", 0, 7, ElementType::kFloat64, got.data());
+  ExpectEqual(got, values, "full read across the edge chunk");
+  std::vector<double> tail(2);
+  store->ReadSlab("row", 5, 7, ElementType::kFloat64, tail.data());
+  ExpectEqual(tail, std::vector<double>{15.0, 16.0},
+              "read inside the edge chunk");
+
+  // zstd, with an edge on both axes.
+  writer->CreateArray("grid", Spec(ElementType::kFloat64, {5, 3}, {2, 2}),
+                      3);
+  std::vector<double> grid(15);
+  for (int i = 0; i < 15; ++i) grid[static_cast<std::size_t>(i)] = i;
+  writer->WriteSlab("grid", 0, 5, ElementType::kFloat64, grid.data());
+  const std::filesystem::path corner =
+      dp3core::zarr::ChunkPath(temp.path(), "grid", {2, 1});
+  Expect(std::filesystem::exists(corner), "corner edge chunk exists");
+  std::vector<double> back(15);
+  store->ReadSlab("grid", 0, 5, ElementType::kFloat64, back.data());
+  ExpectEqual(back, grid, "edge chunks on both axes round-trip");
+  std::vector<double> last(3);
+  store->ReadSlab("grid", 4, 5, ElementType::kFloat64, last.data());
+  ExpectEqual(last, std::vector<double>{12.0, 13.0, 14.0},
+              "last row from the edge chunks");
+  const std::vector<double> patch = {70.0, 71.0, 72.0};
+  writer->WriteSlab("grid", 3, 4, ElementType::kFloat64, patch.data());
+  store->ReadSlab("grid", 0, 5, ElementType::kFloat64, back.data());
+  std::vector<double> want = grid;
+  want[9] = 70.0;
+  want[10] = 71.0;
+  want[11] = 72.0;
+  ExpectEqual(back, want, "partial write into full-size edge chunks");
+}
+
+void TestClippedEdgeChunkStillReads() {
+  // A store written by this library before 2026-10-15 holds the edge
+  // chunk clipped to the array shape. It is still read, and a write to
+  // that chunk restores the full size.
+  using dp3core::zarr::ElementType;
+  TempStore temp;
+  auto writer = dp3core::zarr::CreateZarr(temp.path().string());
+  writer->CreateGroup("", {});
+  writer->CreateArray("row", Spec(ElementType::kFloat64, {7}, {4}), 0);
+  std::vector<double> values(7);
+  for (int i = 0; i < 7; ++i) values[static_cast<std::size_t>(i)] = 10.0 + i;
+  writer->WriteSlab("row", 0, 7, ElementType::kFloat64, values.data());
+  const std::filesystem::path edge =
+      dp3core::zarr::ChunkPath(temp.path(), "row", {1});
+  {
+    std::ofstream file(edge, std::ios::binary | std::ios::trunc);
+    file.write(reinterpret_cast<const char*>(values.data() + 4),
+               3 * sizeof(double));
+  }
+  Expect(std::filesystem::file_size(edge) == 3 * sizeof(double),
+         "clipped edge chunk written by hand");
+  auto store = dp3core::zarr::OpenZarr(temp.path().string());
+  std::vector<double> got(7);
+  store->ReadSlab("row", 0, 7, ElementType::kFloat64, got.data());
+  ExpectEqual(got, values, "clipped edge chunk still reads");
+  const double replacement = 99.0;
+  writer->WriteSlab("row", 5, 6, ElementType::kFloat64, &replacement);
+  Expect(std::filesystem::file_size(edge) == 4 * sizeof(double),
+         "a write restores the full size");
+  store->ReadSlab("row", 0, 7, ElementType::kFloat64, got.data());
+  values[5] = 99.0;
+  ExpectEqual(got, values, "the other rows of the clipped chunk survive");
+}
+
 int main() {
   try {
     TestElementTypes();
     TestInsideChunk();
     TestMissingAndSeveralChunks();
+    TestEdgeChunkIsFullSize();
+    TestClippedEdgeChunkStillReads();
     TestStrings();
     TestDysco();
     TestBlosc();

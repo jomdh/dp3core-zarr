@@ -64,6 +64,23 @@ void DecodeBloscLz4Into(const std::byte* encoded, std::size_t encoded_size,
   }
 }
 
+std::size_t DecodeBloscLz4UpTo(const std::byte* encoded,
+                               std::size_t encoded_size, std::byte* raw,
+                               std::size_t capacity) {
+  PrepareBloscLz4();
+  if (capacity == 0) {
+    if (encoded_size != 0) {
+      throw std::runtime_error("blosc decompress failed");
+    }
+    return 0;
+  }
+  const int written = blosc_decompress_ctx(encoded, raw, capacity, 1);
+  if (written <= 0) {
+    throw std::runtime_error("blosc decompress failed");
+  }
+  return static_cast<std::size_t>(written);
+}
+
 std::vector<std::byte> DecodeBloscLz4(const std::vector<std::byte>& encoded,
                                       std::size_t raw_size) {
   std::vector<std::byte> raw(raw_size);

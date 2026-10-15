@@ -263,10 +263,13 @@ std::vector<std::int64_t> ChunkLength(
 bool ChunkFillsSlab(const Chain& chain,
                    const std::vector<std::int64_t>& origin,
                    const std::vector<std::int64_t>& length,
+                   const std::vector<std::int64_t>& chunk_shape,
                    const std::vector<std::int64_t>& shape,
                    std::int64_t begin, std::int64_t end) {
   if (chain.dysco_data || chain.dysco_weights) return false;
   if (std::endian::native != std::endian::little) return false;
+  // An edge chunk is stored full-size, so its bytes are not the slab's.
+  if (length != chunk_shape) return false;
   if (origin.empty() || origin[0] < begin ||
       origin[0] + length[0] > end) {
     return false;
@@ -309,15 +312,43 @@ void DecodeChunk(const Chain& chain, ElementType type,
   DecodeStandardChunk(type, Product(length), encoded, chain.standard, out);
 }
 
+/// Copies the box @p length from @p src, laid out as @p src_layout, to
+/// @p dst, laid out as @p dst_layout. Both boxes start at the origin.
+void CopyBox(const std::vector<std::int64_t>& length,
+             const std::vector<std::int64_t>& src_layout,
+             const std::byte* src,
+             const std::vector<std::int64_t>& dst_layout, std::byte* dst,
+             std::size_t width) {
+  const std::size_t rank = length.size();
+  if (rank == 0 || Product(length) == 0) return;
+  const std::vector<std::size_t> src_stride = Strides(src_layout);
+  const std::vector<std::size_t> dst_stride = Strides(dst_layout);
+  std::vector<std::int64_t> at(rank, 0);
+  const std::size_t run =
+      static_cast<std::size_t>(length[rank - 1]) * width;
+  std::function<void(std::size_t)> walk = [&](std::size_t dim) {
+    if (dim + 1 == rank) {
+      std::memcpy(dst + Offset(at, dst_stride) * width,
+                  src + Offset(at, src_stride) * width, run);
+      return;
+    }
+    for (at[dim] = 0; at[dim] < length[dim]; ++at[dim]) walk(dim + 1);
+  };
+  walk(0);
+}
+
+/// Moves the in-bounds box @p length of a chunk between the chunk
+/// buffer, laid out as @p layout, and the slab.
 void Transfer(const std::vector<std::int64_t>& origin,
               const std::vector<std::int64_t>& length,
+              const std::vector<std::int64_t>& layout,
               const std::vector<std::int64_t>& shape, std::int64_t begin,
               std::int64_t end, std::size_t width, std::byte* chunk,
               std::byte* slab, bool to_slab) {
   const int rank = static_cast<int>(shape.size());
   std::vector<std::int64_t> region = shape;
   region[0] = end - begin;
-  const std::vector<std::size_t> chunk_stride = Strides(length);
+  const std::vector<std::size_t> chunk_stride = Strides(layout);
   const std::vector<std::size_t> slab_stride = Strides(region);
   std::vector<std::int64_t> local(static_cast<std::size_t>(rank), 0);
   const auto copy_run = [&](int last, std::int64_t local_from,
@@ -421,20 +452,31 @@ void ReadRegion(const std::string& store, const std::string& array,
     bool found = false;
     const std::vector<std::byte> encoded =
         ReadChunkFile(ChunkPath(store, array, index), &found);
-    if (ChunkFillsSlab(chain, origin, length, info.shape, begin, end)) {
+    if (ChunkFillsSlab(chain, origin, length, info.chunk_shape, info.shape,
+                       begin, end)) {
       if (!found) return;
       DecodeNativeChunk(type, Product(length), encoded, chain.standard,
                         slab + SlabElement(origin, stride, begin) * width);
       return;
     }
-    std::vector<std::byte> chunk(Product(length) * width);
+    // A Zarr v3 chunk is stored full-size. An edge chunk this library
+    // wrote before 2026-10-15 was clipped to the array shape; that
+    // layout is still read. A Dysco chunk carries the clipped shape.
+    std::vector<std::int64_t> layout = info.chunk_shape;
+    std::vector<std::byte> chunk(Product(layout) * width);
     if (!found) {
-      FillElements(type, Product(length), chunk.data());
-    } else {
+      FillElements(type, Product(layout), chunk.data());
+    } else if (chain.dysco_data || chain.dysco_weights) {
+      layout = length;
       DecodeChunk(chain, type, length, encoded, chunk.data());
+    } else {
+      const std::size_t count = DecodeStandardChunkEither(
+          type, Product(layout), Product(length), encoded, chain.standard,
+          chunk.data());
+      if (count != Product(layout)) layout = length;
     }
-    Transfer(origin, length, info.shape, begin, end, width, chunk.data(),
-             slab, true);
+    Transfer(origin, length, layout, info.shape, begin, end, width,
+             chunk.data(), slab, true);
   });
 }
 
@@ -507,7 +549,8 @@ void WriteFirstAxis(const std::string& store, const std::string& array,
   VisitChunks(info, begin, end, [&](const std::vector<std::int64_t>& index) {
     const std::vector<std::int64_t> length = ChunkLength(info, index);
     const std::vector<std::int64_t> origin = Origin(info, index);
-    if (ChunkFillsSlab(chain, origin, length, info.shape, begin, end)) {
+    if (ChunkFillsSlab(chain, origin, length, info.chunk_shape, info.shape,
+                       begin, end)) {
       const std::byte* span =
           slab + SlabElement(origin, stride, begin) * width;
       const std::vector<std::byte> encoded = EncodeNativeChunk(
@@ -517,23 +560,36 @@ void WriteFirstAxis(const std::string& store, const std::string& array,
                  encoded.size());
       return;
     }
+    // The chunk is written full-size (Zarr v3). Cells past the array
+    // edge hold the fill value. A chunk already on disk may be an edge
+    // chunk clipped by this library before 2026-10-15; its box is
+    // copied into the full layout.
     const bool covered =
         origin[0] >= begin && origin[0] + length[0] <= end;
-    std::vector<std::byte> chunk(Product(length) * width);
+    const std::vector<std::int64_t>& layout = info.chunk_shape;
+    std::vector<std::byte> chunk(Product(layout) * width);
+    FillElements(type, Product(layout), chunk.data());
     if (!covered) {
       bool found = false;
       const std::vector<std::byte> encoded =
           ReadChunkFile(ChunkPath(store, array, index), &found);
-      if (!found) {
-        FillElements(type, Product(length), chunk.data());
-      } else {
-        DecodeChunk(chain, type, length, encoded, chunk.data());
+      if (found) {
+        std::vector<std::byte> stored(Product(layout) * width);
+        const std::size_t count = DecodeStandardChunkEither(
+            type, Product(layout), Product(length), encoded,
+            chain.standard, stored.data());
+        if (count == Product(layout)) {
+          chunk.swap(stored);
+        } else {
+          CopyBox(length, length, stored.data(), layout, chunk.data(),
+                  width);
+        }
       }
     }
-    Transfer(origin, length, info.shape, begin, end, width, chunk.data(),
-             const_cast<std::byte*>(slab), false);
+    Transfer(origin, length, layout, info.shape, begin, end, width,
+             chunk.data(), const_cast<std::byte*>(slab), false);
     const std::vector<std::byte> encoded = EncodeStandardChunk(
-        type, Product(length), chunk.data(), chain.standard);
+        type, Product(layout), chunk.data(), chain.standard);
     WriteBytes(ChunkPath(store, array, index),
                reinterpret_cast<const char*>(encoded.data()), encoded.size());
   });
@@ -614,10 +670,16 @@ std::vector<std::string> ReadAllStrings(const std::string& store,
                 const std::vector<std::byte> encoded =
                     ReadChunkFile(ChunkPath(store, array, index), &found);
                 if (!found) return;
-                const std::size_t raw = static_cast<std::size_t>(count) *
-                                        static_cast<std::size_t>(length_bytes);
-                const std::vector<std::byte> bytes =
-                    DecodeBytePayload(raw, encoded, chain.standard);
+                // Full chunk (Zarr v3), or clipped by this library
+                // before 2026-10-15. The rows read are the prefix.
+                const std::size_t full =
+                    static_cast<std::size_t>(info.chunk_shape[0]) *
+                    static_cast<std::size_t>(length_bytes);
+                const std::size_t clipped =
+                    static_cast<std::size_t>(count) *
+                    static_cast<std::size_t>(length_bytes);
+                const std::vector<std::byte> bytes = DecodeBytePayloadEither(
+                    full, clipped, encoded, chain.standard);
                 for (std::int64_t row = 0; row < count; ++row) {
                   std::string text;
                   const std::size_t row_bytes =

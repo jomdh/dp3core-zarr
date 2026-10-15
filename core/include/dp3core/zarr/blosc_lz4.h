@@ -27,6 +27,12 @@ std::vector<std::byte> DecodeBloscLz4(const std::vector<std::byte>& encoded,
                                       std::size_t raw_size);
 
 /// Decompresses a frame into @p raw. @p raw_size is the decoded length.
+/// Decompresses into at most @p capacity bytes and returns the count
+/// written. The caller checks that count.
+std::size_t DecodeBloscLz4UpTo(const std::byte* encoded,
+                               std::size_t encoded_size, std::byte* raw,
+                               std::size_t capacity);
+
 void DecodeBloscLz4Into(const std::byte* encoded, std::size_t encoded_size,
                         std::byte* raw, std::size_t raw_size);
 

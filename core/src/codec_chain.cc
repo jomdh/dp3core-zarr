@@ -212,6 +212,19 @@ std::vector<std::byte> Compress(const std::vector<std::byte>& raw,
   return CompressSpan(raw.data(), raw.size(), level, checksum);
 }
 
+/// Decompresses into at most @p capacity bytes and returns the count
+/// written. The caller checks that count.
+std::size_t DecompressUpTo(const std::vector<std::byte>& encoded,
+                           std::byte* raw, std::size_t capacity) {
+  const std::size_t written =
+      ZSTD_decompress(raw, capacity, encoded.data(), encoded.size());
+  if (ZSTD_isError(written)) {
+    throw std::runtime_error(std::string("zstd decompress failed: ") +
+                             ZSTD_getErrorName(written));
+  }
+  return written;
+}
+
 void DecompressInto(const std::vector<std::byte>& encoded, std::byte* raw,
                     std::size_t raw_size) {
   const std::size_t written =
@@ -287,6 +300,49 @@ std::vector<std::byte> DecodeBytePayload(
     throw std::runtime_error("Decoded chunk has the wrong size");
   }
   return encoded;
+}
+
+std::vector<std::byte> DecodeBytePayloadEither(
+    std::size_t full_size, std::size_t short_size,
+    const std::vector<std::byte>& encoded,
+    const std::vector<CodecStep>& codecs) {
+  if (full_size == short_size) {
+    return DecodeBytePayload(full_size, encoded, codecs);
+  }
+  CheckChain(codecs);
+  std::vector<std::byte> raw(full_size);
+  std::size_t written = 0;
+  if (codecs.size() == 2 && codecs[1].name == "blosc") {
+    written =
+        DecodeBloscLz4UpTo(encoded.data(), encoded.size(), raw.data(),
+                           full_size);
+  } else if (codecs.size() == 2) {
+    written = DecompressUpTo(encoded, raw.data(), full_size);
+  } else {
+    written = encoded.size();
+    if ((written == full_size || written == short_size) && written != 0) {
+      std::memcpy(raw.data(), encoded.data(), written);
+    }
+  }
+  if (written != full_size && written != short_size) {
+    throw std::runtime_error("Decoded chunk has the wrong size");
+  }
+  raw.resize(written);
+  return raw;
+}
+
+std::size_t DecodeStandardChunkEither(ElementType type,
+                                      std::size_t full_count,
+                                      std::size_t short_count,
+                                      const std::vector<std::byte>& encoded,
+                                      const std::vector<CodecStep>& codecs,
+                                      void* out) {
+  const std::size_t width = ElementSize(type);
+  const std::vector<std::byte> bytes = DecodeBytePayloadEither(
+      full_count * width, short_count * width, encoded, codecs);
+  const std::size_t count = bytes.size() / width;
+  Unpack(type, bytes, count, out);
+  return count;
 }
 
 std::vector<std::byte> EncodeNativeChunk(

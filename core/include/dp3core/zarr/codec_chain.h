@@ -57,6 +57,25 @@ std::vector<std::byte> DecodeBytePayload(
     std::size_t raw_size, const std::vector<std::byte>& encoded,
     const std::vector<CodecStep>& codecs);
 
+/// DecodeBytePayload for a payload of @p full_size bytes, or of
+/// @p short_size bytes. A Zarr v3 chunk is always full-size. This
+/// library wrote an edge chunk clipped to the array shape before
+/// 2026-10-15, and that payload is @p short_size. The result has the
+/// size that was found.
+std::vector<std::byte> DecodeBytePayloadEither(
+    std::size_t full_size, std::size_t short_size,
+    const std::vector<std::byte>& encoded,
+    const std::vector<CodecStep>& codecs);
+
+/// DecodeStandardChunk for @p full_count elements, or @p short_count
+/// (see DecodeBytePayloadEither). Returns the count decoded.
+std::size_t DecodeStandardChunkEither(ElementType type,
+                                      std::size_t full_count,
+                                      std::size_t short_count,
+                                      const std::vector<std::byte>& encoded,
+                                      const std::vector<CodecStep>& codecs,
+                                      void* out);
+
 }  // namespace dp3core::zarr
 
 #endif  // DP3CORE_ZARR_CODEC_CHAIN_H_

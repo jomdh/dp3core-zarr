@@ -13,6 +13,9 @@ A numeric slab uses bytes, bytes then zstd, or bytes then blosc.
 blosc is lz4, level 5, and no shuffle.
 Any other blosc compressor, level, or shuffle is an error.
 A Dysco chunk is decoded on read.
+An edge chunk is stored full-size, as Zarr v3 says.
+An edge chunk this library clipped before 2026-10-15 is still read.
+An `int8` array is read as `bool`. The library writes `bool`.
 The library target is `dp3core_zarr::core`.
 `LibraryVersion()` returns the version string.
 

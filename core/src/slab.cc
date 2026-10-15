@@ -116,6 +116,9 @@ ElementType StoredType(const Json& data_type) {
   }
   const std::string name = data_type.get<std::string>();
   if (name == "bool") return ElementType::kBool;
+  // A flag array written by another tool may be int8. It is read as
+  // bool: a nonzero byte is true. This library never writes int8.
+  if (name == "int8") return ElementType::kBool;
   if (name == "float32") return ElementType::kFloat32;
   if (name == "float64") return ElementType::kFloat64;
   if (name == "complex64") return ElementType::kComplex64;

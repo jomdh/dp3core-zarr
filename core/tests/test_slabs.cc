@@ -522,8 +522,50 @@ void TestClippedEdgeChunkStillReads() {
   ExpectEqual(got, values, "the other rows of the clipped chunk survive");
 }
 
+// B57 (V1-M1-S034). A flag array another tool wrote as int8 reads as
+// bool. A nonzero byte is true.
+void TestInt8ReadsAsBool() {
+  using dp3core::zarr::ElementType;
+  TempStore temp;
+  auto writer = dp3core::zarr::CreateZarr(temp.path().string());
+  writer->CreateGroup("", {});
+  writer->CreateArray("flag", Spec(ElementType::kBool, {4}, {4}), 0);
+  const std::filesystem::path metadata =
+      dp3core::zarr::MetadataPath(temp.path(), "flag");
+  std::string document;
+  {
+    std::ifstream in(metadata, std::ios::binary);
+    document.assign(std::istreambuf_iterator<char>(in),
+                    std::istreambuf_iterator<char>());
+  }
+  const std::string::size_type at = document.find("\"bool\"");
+  Expect(at != std::string::npos, "bool data type in the document");
+  document.replace(at, 6, "\"int8\"");
+  {
+    std::ofstream out(metadata, std::ios::binary | std::ios::trunc);
+    out << document;
+  }
+  const unsigned char raw[4] = {0, 1, 2, 0};
+  {
+    const std::filesystem::path chunk_path =
+        dp3core::zarr::ChunkPath(temp.path(), "flag", {0});
+    std::filesystem::create_directories(chunk_path.parent_path());
+    std::ofstream chunk(chunk_path, std::ios::binary | std::ios::trunc);
+    chunk.write(reinterpret_cast<const char*>(raw), 4);
+    Expect(chunk.good(), "int8 chunk written by hand");
+  }
+  auto store = dp3core::zarr::OpenZarr(temp.path().string());
+  bool got[4] = {true, true, true, true};
+  store->ReadSlab("flag", 0, 4, ElementType::kBool, got);
+  Expect(!got[0] && got[1] && got[2] && !got[3], "int8 reads as bool");
+  const std::vector<double> doubles = store->ReadDoubles("flag");
+  ExpectEqual(doubles, std::vector<double>{0.0, 1.0, 1.0, 0.0},
+              "int8 reads as 0 and 1 doubles");
+}
+
 int main() {
   try {
+    TestInt8ReadsAsBool();
     TestElementTypes();
     TestInsideChunk();
     TestMissingAndSeveralChunks();

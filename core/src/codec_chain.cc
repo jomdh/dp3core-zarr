@@ -379,17 +379,22 @@ void DecodeNativeChunk(ElementType type, std::size_t count,
   auto* raw = static_cast<std::byte*>(out);
   if (codecs.size() == 2 && codecs[1].name == "blosc") {
     DecodeBloscLz4Into(encoded.data(), encoded.size(), raw, bytes);
-    return;
-  }
-  if (codecs.size() == 2) {
+  } else if (codecs.size() == 2) {
     DecompressInto(encoded, raw, bytes);
-    return;
+  } else {
+    if (encoded.size() != bytes) {
+      throw std::runtime_error("Decoded chunk has the wrong size");
+    }
+    if (bytes != 0) {
+      std::memcpy(raw, encoded.data(), bytes);
+    }
   }
-  if (encoded.size() != bytes) {
-    throw std::runtime_error("Decoded chunk has the wrong size");
-  }
-  if (bytes != 0) {
-    std::memcpy(raw, encoded.data(), bytes);
+  // An int8 flag array reads as bool. A byte other than 0 or 1 is
+  // not a valid bool, so every nonzero byte becomes 1.
+  if (type == ElementType::kBool) {
+    for (std::size_t i = 0; i < bytes; ++i) {
+      raw[i] = raw[i] == std::byte{0} ? std::byte{0} : std::byte{1};
+    }
   }
 }
 
